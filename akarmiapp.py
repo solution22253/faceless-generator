@@ -39,7 +39,6 @@ def init_db():
     c.execute("""
         INSERT OR IGNORE INTO users (email, license_code, credits)
         VALUES ('teszt@gmail.com', 'PROFI2026', 100)
-        VALUES ('teszt2@gmail.com', 'PROFI2026', 100)
     """)
     conn.commit()
     conn.close()
