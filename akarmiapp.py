@@ -1,6 +1,21 @@
 import streamlit as st
 import sqlite3
 import google.generativeai as genai
+from streamlit.components.v1 import html
+
+# Hosted with Streamlit és profil jelvény eltüntetése
+html("""
+<script>
+const hideStreamlitBadge = () => {
+    try {
+        const badges = window.top.document.querySelectorAll('[href*="streamlit.io"], [class*="viewerBadge"]');
+        badges.forEach(el => el.style.setProperty("display", "none", "important"));
+    } catch (e) {}
+};
+window.addEventListener('load', hideStreamlitBadge);
+setInterval(hideStreamlitBadge, 500);
+</script>
+""", height=0, width=0)
 
 # ==========================================
 # 1. GOOGLE GEMINI KONFIGURÁCIÓ
