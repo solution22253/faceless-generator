@@ -5,8 +5,7 @@ import google.generativeai as genai
 # ==========================================
 # 1. GOOGLE GEMINI KONFIGURÁCIÓ
 # ==========================================
-GEMINI_API_KEY = "AQ.Ab8RN6JY2iAftN6a2g2jeM_UGmSEOjtu9yJ1ZlwUNiH0lykQYA"
-genai.configure(api_key=GEMINI_API_KEY)
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ==========================================
 # 2. ADATBÁZIS KEZELÉS (SQLite)
