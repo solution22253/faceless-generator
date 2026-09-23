@@ -1,7 +1,7 @@
 import streamlit as st
-import sqlite3
 import google.generativeai as genai
 from streamlit.components.v1 import html
+from streamlit_gsheets import GSheetsConnection
 
 # Hosted with Streamlit és profil jelvény eltüntetése
 html("""
@@ -23,47 +23,52 @@ setInterval(hideStreamlitBadge, 500);
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ==========================================
-# 2. ADATBÁZIS KEZELÉS (SQLite)
+# 2. ADATBÁZIS KEZELÉS (Google Sheets)
 # ==========================================
-def init_db():
-    conn = sqlite3.connect("users.db")
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            email TEXT PRIMARY KEY,
-            license_code TEXT,
-            credits INTEGER
-        )
-    """)
-    # Háttérben megmarad a tesztfiók
-    c.execute("""
-        INSERT OR IGNORE INTO users (email, license_code, credits)
-        VALUES ('teszt@gmail.com', 'PROFI2026', 100)
-    """)
-    conn.commit()
-    conn.close()
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 def get_user_credits(email, code):
-    conn = sqlite3.connect("users.db")
-    c = conn.cursor()
-    c.execute("""
-        SELECT credits FROM users 
-        WHERE LOWER(email) = LOWER(?) AND license_code = ?
-    """, (email.strip(), code.strip()))
-    result = c.fetchone()
-    conn.close()
-    return result[0] if result else None
+    try:
+        # Friss adatok beolvasása a Google Táblázatból
+        df = conn.read(ttl=0)
+        if df is None or df.empty:
+            return None
+        
+        email_clean = str(email).strip().lower()
+        code_clean = str(code).strip()
+        
+        # Felhasználó és licenckód keresése
+        user_row = df[
+            (df['email'].astype(str).str.strip().str.lower() == email_clean) & 
+            (df['license_code'].astype(str).str.strip() == code_clean)
+        ]
+        
+        if not user_row.empty:
+            return int(user_row.iloc[0]['credits'])
+        return None
+    except Exception as e:
+        st.error(f"Hiba az adatbázis elérésekor: {e}")
+        return None
 
 def deduct_one_credit(email):
-    conn = sqlite3.connect("users.db")
-    c = conn.cursor()
-    c.execute("""
-        UPDATE users 
-        SET credits = credits - 1 
-        WHERE LOWER(email) = LOWER(?)
-    """, (email.strip(),))
-    conn.commit()
-    conn.close()
+    try:
+        df = conn.read(ttl=0)
+        if df is None or df.empty:
+            return False
+            
+        email_clean = str(email).strip().lower()
+        idx = df[df['email'].astype(str).str.strip().str.lower() == email_clean].index
+        
+        if not idx.empty:
+            current_credits = int(df.loc[idx[0], 'credits'])
+            if current_credits > 0:
+                df.loc[idx[0], 'credits'] = current_credits - 1
+                conn.update(data=df)
+                return True
+        return False
+    except Exception as e:
+        st.error(f"Hiba a kredit levonásakor: {e}")
+        return False
 
 # ==========================================
 # 3. GENERÁLÓ MOTOR (Dinamikus Hossz)
@@ -115,7 +120,6 @@ def generate_faceless_script(tema, kategoria, hossz):
 # 4. STREAMLIT FELÜLET ÉS STÍLUSOK
 # ==========================================
 st.set_page_config(page_title="Faceless Videó Generátor", page_icon="🎬", layout="wide")
-init_db()
 
 # Egyedi gombstílusok
 st.markdown("""
@@ -252,7 +256,7 @@ else:
             ["10 másodperc (Gyors / Loop)", "30 másodperc (Pörgős sztori)", "60 másodperc (Teljes történet)"]
         )
 
-    # Rövidebb, zöld színű indítógomb
+    # Indítógomb
     col_btn, _ = st.columns([1, 3])
     with col_btn:
         start_generation = st.button("🚀 Generálás (1 kredit)", type="primary")
@@ -267,7 +271,7 @@ else:
                 try:
                     eredmeny = generate_faceless_script(tema, kategoria, hossz)
                     
-                    # Kredit levonása
+                    # Kredit levonása a Google Táblázatban és a munkamenetben
                     deduct_one_credit(st.session_state.user_email)
                     st.session_state.credits -= 1
                     
