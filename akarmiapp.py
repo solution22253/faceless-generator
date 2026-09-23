@@ -24,57 +24,11 @@ setInterval(hideStreamlitBadge, 500);
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ==========================================
-# 2. ADATBÁZIS KEZELÉS (Közvetlen GSpread kapcsolat)
+# 2. ADATBÁZIS KEZELÉS (Google Sheets kapcsolat)
 # ==========================================
 SPREADSHEET_ID = "1UQIUUAvnVganiZMWzM63SUuY1vw652VZp075kCf_Ebw"
 
-@st.cache_resource
-def get_user_credits(email, code):
-    # 1. LÉPÉS: Google kapcsolat ellenőrzése
-    try:
-        gc = get_gspread_client()
-    except Exception as e:
-        st.error(f"❌ 1. Google hitelesítési hiba: {e}")
-        return None
-
-    # 2. LÉPÉS: Táblázat elérése
-    try:
-        sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
-    except Exception as e:
-        st.error(f"❌ 2. Táblázat megnyitási hiba (API vagy jogosultság): {e}")
-        return None
-
-    # 3. LÉPÉS: Sorok beolvasása
-    try:
-        records = sheet.get_all_records()
-    except Exception as e:
-        st.error(f"❌ 3. Adatok kiolvasási hiba: {e}")
-        return None
-
-    email_clean = str(email).strip().lower()
-    code_clean = str(code).strip()
-
-    # Élő állapot kiírása a képernyőre
-    st.info(f"🔍 Beírt adatok: Email: '{email_clean}' | Kód: '{code_clean}'")
-    st.info(f"📊 A táblázatban ezt látja a rendszer: {records}")
-
-    # 4. LÉPÉS: Egyezés keresése
-    for row in records:
-        clean_row = {str(k).strip().lower(): v for k, v in row.items()}
-        row_email = str(clean_row.get("email", "")).strip().lower()
-        row_code = str(clean_row.get("license_code", "")).strip()
-
-        if row_email == email_clean and row_code == code_clean:
-            raw_cred = clean_row.get("credits", 100)
-            try:
-                if str(raw_cred).strip() == "":
-                    return 100
-                return int(float(str(raw_cred).strip()))
-            except Exception:
-                return 100
-
-    st.warning("⚠️ Nem talált pontos egyezést a sorok között!")
-    return None
+def get_gspread_client():
     creds_dict = dict(st.secrets["connections"]["gsheets"])
     # Automatikus sortörés-javítás a titkos kulcsban
     if "private_key" in creds_dict and isinstance(creds_dict["private_key"], str):
@@ -105,8 +59,7 @@ def get_user_credits(email, code):
                 try:
                     return int(clean_row.get("credits", 0))
                 except (ValueError, TypeError):
-                    st.error("A táblázatban a kreditérték nem szám!")
-                    return None
+                    return 0
                     
         return None
     except Exception as e:
@@ -128,9 +81,7 @@ def deduct_one_credit(email):
             if row_email == email_clean:
                 current_credits = int(clean_row.get("credits", 0))
                 if current_credits > 0:
-                    # A Google Sheets 1-alapú indexelést használ:
-                    # 1. sor: Fejléc, az első adat a 2. sorban van (idx + 2), a kreditoszlop a 3. oszlop (C)
-                    row_number = idx + 2
+                    row_number = idx + 2  # 1-alapú indexelés: 1. sor a fejléc, adat a 2.-tól
                     sheet.update_cell(row_number, 3, current_credits - 1)
                     return True
         return False
