@@ -1,7 +1,8 @@
 import streamlit as st
 import google.generativeai as genai
 from streamlit.components.v1 import html
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 # Hosted with Streamlit és profil jelvény eltüntetése
 html("""
@@ -23,28 +24,45 @@ setInterval(hideStreamlitBadge, 500);
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ==========================================
-# 2. ADATBÁZIS KEZELÉS (Google Sheets)
+# 2. ADATBÁZIS KEZELÉS (Közvetlen GSpread kapcsolat)
 # ==========================================
-conn = st.connection("gsheets", type=GSheetsConnection)
+SPREADSHEET_ID = "1UQIUUAvnVganiZMWzM63SUuY1vw652VZp075kCf_Ebw"
+
+@st.cache_resource
+def get_gspread_client():
+    creds_dict = dict(st.secrets["connections"]["gsheets"])
+    # Automatikus sortörés-javítás a titkos kulcsban
+    if "private_key" in creds_dict and isinstance(creds_dict["private_key"], str):
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    return gspread.authorize(credentials)
 
 def get_user_credits(email, code):
     try:
-        # Friss adatok beolvasása a Google Táblázatból
-        df = conn.read(ttl=0)
-        if df is None or df.empty:
-            return None
+        gc = get_gspread_client()
+        sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
+        records = sheet.get_all_records()
         
         email_clean = str(email).strip().lower()
         code_clean = str(code).strip()
         
-        # Felhasználó és licenckód keresése
-        user_row = df[
-            (df['email'].astype(str).str.strip().str.lower() == email_clean) & 
-            (df['license_code'].astype(str).str.strip() == code_clean)
-        ]
-        
-        if not user_row.empty:
-            return int(user_row.iloc[0]['credits'])
+        for row in records:
+            clean_row = {str(k).strip().lower(): v for k, v in row.items()}
+            row_email = str(clean_row.get("email", "")).strip().lower()
+            row_code = str(clean_row.get("license_code", "")).strip()
+            
+            if row_email == email_clean and row_code == code_clean:
+                try:
+                    return int(clean_row.get("credits", 0))
+                except (ValueError, TypeError):
+                    st.error("A táblázatban a kreditérték nem szám!")
+                    return None
+                    
         return None
     except Exception as e:
         st.error(f"Hiba az adatbázis elérésekor: {e}")
@@ -52,19 +70,24 @@ def get_user_credits(email, code):
 
 def deduct_one_credit(email):
     try:
-        df = conn.read(ttl=0)
-        if df is None or df.empty:
-            return False
-            
-        email_clean = str(email).strip().lower()
-        idx = df[df['email'].astype(str).str.strip().str.lower() == email_clean].index
+        gc = get_gspread_client()
+        sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
+        records = sheet.get_all_records()
         
-        if not idx.empty:
-            current_credits = int(df.loc[idx[0], 'credits'])
-            if current_credits > 0:
-                df.loc[idx[0], 'credits'] = current_credits - 1
-                conn.update(data=df)
-                return True
+        email_clean = str(email).strip().lower()
+        
+        for idx, row in enumerate(records):
+            clean_row = {str(k).strip().lower(): v for k, v in row.items()}
+            row_email = str(clean_row.get("email", "")).strip().lower()
+            
+            if row_email == email_clean:
+                current_credits = int(clean_row.get("credits", 0))
+                if current_credits > 0:
+                    # A Google Sheets 1-alapú indexelést használ:
+                    # 1. sor: Fejléc, az első adat a 2. sorban van (idx + 2), a kreditoszlop a 3. oszlop (C)
+                    row_number = idx + 2
+                    sheet.update_cell(row_number, 3, current_credits - 1)
+                    return True
         return False
     except Exception as e:
         st.error(f"Hiba a kredit levonásakor: {e}")
@@ -271,7 +294,7 @@ else:
                 try:
                     eredmeny = generate_faceless_script(tema, kategoria, hossz)
                     
-                    # Kredit levonása a Google Táblázatban és a munkamenetben
+                    # Kredit levonása
                     deduct_one_credit(st.session_state.user_email)
                     st.session_state.credits -= 1
                     
