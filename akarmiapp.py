@@ -3,6 +3,7 @@ import google.generativeai as genai
 from streamlit.components.v1 import html
 import gspread
 from google.oauth2.service_account import Credentials
+import re
 
 # Hosted with Streamlit és profil jelvény eltüntetése
 html("""
@@ -28,11 +29,30 @@ genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 # ==========================================
 SPREADSHEET_ID = "1UQIUUAvnVganiZMWzM63SUuY1vw652VZp075kCf_Ebw"
 
+def clean_private_key(raw_key):
+    """Automatikusan kitisztítja a hibás sortöréseket, behúzásokat és szóközöket a kulcsból."""
+    if not isinstance(raw_key, str):
+        return raw_key
+    raw_key = raw_key.replace("\\n", "\n").replace("\r", "")
+    header = "-----BEGIN PRIVATE KEY-----"
+    footer = "-----END PRIVATE KEY-----"
+    
+    if "BEGIN PRIVATE KEY" in raw_key and "END PRIVATE KEY" in raw_key:
+        start = raw_key.find("BEGIN PRIVATE KEY")
+        end = raw_key.find("END PRIVATE KEY")
+        body = raw_key[start + len("BEGIN PRIVATE KEY"):end]
+        
+        # Eltávolítunk minden nem-base64 karaktert (szóközök, behúzások, kötőjelek a törzsből)
+        clean_b64 = re.sub(r"[^A-Za-z0-9+/=]", "", body)
+        # Szabványos 64 karakteres sorokra tördeljük
+        lines = [clean_b64[i:i+64] for i in range(0, len(clean_b64), 64)]
+        return f"{header}\n" + "\n".join(lines) + f"\n{footer}\n"
+    return raw_key
+
 def get_gspread_client():
     creds_dict = dict(st.secrets["connections"]["gsheets"])
-    # Automatikus sortörés-javítás a titkos kulcsban
-    if "private_key" in creds_dict and isinstance(creds_dict["private_key"], str):
-        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+    if "private_key" in creds_dict:
+        creds_dict["private_key"] = clean_private_key(creds_dict["private_key"])
         
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -81,7 +101,7 @@ def deduct_one_credit(email):
             if row_email == email_clean:
                 current_credits = int(clean_row.get("credits", 0))
                 if current_credits > 0:
-                    row_number = idx + 2  # 1-alapú indexelés: 1. sor a fejléc, adat a 2.-tól
+                    row_number = idx + 2
                     sheet.update_cell(row_number, 3, current_credits - 1)
                     return True
         return False
@@ -140,10 +160,8 @@ def generate_faceless_script(tema, kategoria, hossz):
 # ==========================================
 st.set_page_config(page_title="Faceless Videó Generátor", page_icon="🎬", layout="wide")
 
-# Egyedi gombstílusok
 st.markdown("""
 <style>
-    /* Zöld elsődleges gombok (Generálás és Belépés) */
     button[data-testid="baseButton-primary"], button[kind="primary"] {
         background-color: #22c55e !important;
         border-color: #22c55e !important;
@@ -157,7 +175,6 @@ st.markdown("""
         color: #ffffff !important;
     }
 
-    /* Halvány piros Kijelentkezés gomb az oldalsávban */
     section[data-testid="stSidebar"] button[data-testid="baseButton-secondary"],
     section[data-testid="stSidebar"] button[kind="secondary"] {
         background-color: rgba(239, 68, 68, 0.15) !important;
@@ -191,7 +208,6 @@ with st.sidebar:
         login_email = st.text_input("E-mail cím", placeholder="pelda@gmail.com")
         login_code = st.text_input("Licenckód", type="password")
         
-        # Zöld színű Belépés gomb
         if st.button("Belépés", type="primary", use_container_width=True):
             creds = get_user_credits(login_email, login_code)
             if creds is not None:
@@ -210,7 +226,6 @@ with st.sidebar:
             st.warning("Fogytán vannak a kreditjeid!")
             st.markdown("[👉 **Kreditek újratöltése itt**](https://digitalproduct-store.com)")
             
-        # Halvány piros Kijelentkezés gomb
         if st.button("Kijelentkezés", use_container_width=True):
             st.session_state.logged_in = False
             st.session_state.user_email = ""
@@ -221,10 +236,8 @@ with st.sidebar:
 st.title("🎬 Faceless Videó Forgatókönyv Generátor")
 st.caption("Készíts virális magyar narrációt és hollywoodi angol képpromptokat 10, 30 vagy 60 másodperces hosszban.")
 
-# HA NINCS BEJELENTKEZVE: ÉRTÉKESÍTÉSI HOOK ÉS ZÖLD GOMB
 if not st.session_state.logged_in:
     st.divider()
-    
     st.markdown("""
     ### 🔥 Szeretnél te is arcmutatás nélkül nézettséget építeni?
     
@@ -234,7 +247,6 @@ if not st.session_state.logged_in:
     """)
     
     st.write("")
-    
     st.markdown("""
     <div style="margin: 15px 0;">
         <a href="https://digitalproduct-store.com" target="_blank" style="
@@ -255,27 +267,15 @@ if not st.session_state.logged_in:
     st.divider()
     st.info("👈 **Már van licenckódod?** Add meg az e-mail címedet és a kódodat a bal oldali sávban a szoftver azonnali indításához!")
 
-# HA BE VAN JELENTKEZVE: SZOFTVER FUNKCIÓK
 else:
     col1, col2, col3 = st.columns([2, 1, 1])
-    
     with col1:
-        tema = st.text_input(
-            "Miről szóljon a videó? (Téma / Cím)",
-            placeholder="pl. A 3 legveszélyesebb hely a Földön, ahová tilos belépni"
-        )
+        tema = st.text_input("Miről szóljon a videó? (Téma / Cím)", placeholder="pl. A 3 legveszélyesebb hely a Földön, ahová tilos belépni")
     with col2:
-        kategoria = st.selectbox(
-            "Kategória / Nise",
-            ["Érdekességek & Rejtélyek", "Pszichológia & Önfejlesztés", "Pénz, Siker & Történetek", "Történelem & Legendák", "Sci-Fi & Jövő"]
-        )
+        kategoria = st.selectbox("Kategória / Nise", ["Érdekességek & Rejtélyek", "Pszichológia & Önfejlesztés", "Pénz, Siker & Történetek", "Történelem & Legendák", "Sci-Fi & Jövő"])
     with col3:
-        hossz = st.selectbox(
-            "Videó hossza",
-            ["10 másodperc (Gyors / Loop)", "30 másodperc (Pörgős sztori)", "60 másodperc (Teljes történet)"]
-        )
+        hossz = st.selectbox("Videó hossza", ["10 másodperc (Gyors / Loop)", "30 másodperc (Pörgős sztori)", "60 másodperc (Teljes történet)"])
 
-    # Indítógomb
     col_btn, _ = st.columns([1, 3])
     with col_btn:
         start_generation = st.button("🚀 Generálás (1 kredit)", type="primary")
@@ -289,15 +289,12 @@ else:
             with st.spinner("Kérlek várj, azonnal kész..."):
                 try:
                     eredmeny = generate_faceless_script(tema, kategoria, hossz)
-                    
-                    # Kredit levonása
                     deduct_one_credit(st.session_state.user_email)
                     st.session_state.credits -= 1
                     
                     st.success("A forgatókönyv elkészült! (1 kredit levonva)")
                     st.markdown(eredmeny)
                     
-                    # Letöltés gomb
                     st.download_button(
                         label="📥 Forgatókönyv letöltése (.txt)",
                         data=eredmeny,
