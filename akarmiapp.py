@@ -1,9 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 from streamlit.components.v1 import html
-import gspread
-from google.oauth2.service_account import Credentials
-import re
+import requests
 
 # Hosted with Streamlit és profil jelvény eltüntetése
 html("""
@@ -25,85 +23,37 @@ setInterval(hideStreamlitBadge, 500);
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ==========================================
-# 2. ADATBÁZIS KEZELÉS (Google Sheets kapcsolat)
+# 2. ADATBÁZIS KEZELÉS (Közvetlen Web API kapcsolat)
 # ==========================================
-SPREADSHEET_ID = "1UQIUUAvnVganiZMWzM63SUuY1vw652VZp075kCf_Ebw"
-
-def clean_private_key(raw_key):
-    """Automatikusan kitisztítja a hibás sortöréseket, behúzásokat és szóközöket a kulcsból."""
-    if not isinstance(raw_key, str):
-        return raw_key
-    raw_key = raw_key.replace("\\n", "\n").replace("\r", "")
-    header = "-----BEGIN PRIVATE KEY-----"
-    footer = "-----END PRIVATE KEY-----"
-    
-    if "BEGIN PRIVATE KEY" in raw_key and "END PRIVATE KEY" in raw_key:
-        start = raw_key.find("BEGIN PRIVATE KEY")
-        end = raw_key.find("END PRIVATE KEY")
-        body = raw_key[start + len("BEGIN PRIVATE KEY"):end]
-        
-        # Eltávolítunk minden nem-base64 karaktert (szóközök, behúzások, kötőjelek a törzsből)
-        clean_b64 = re.sub(r"[^A-Za-z0-9+/=]", "", body)
-        # Szabványos 64 karakteres sorokra tördeljük
-        lines = [clean_b64[i:i+64] for i in range(0, len(clean_b64), 64)]
-        return f"{header}\n" + "\n".join(lines) + f"\n{footer}\n"
-    return raw_key
-
-def get_gspread_client():
-    creds_dict = dict(st.secrets["connections"]["gsheets"])
-    if "private_key" in creds_dict:
-        creds_dict["private_key"] = clean_private_key(creds_dict["private_key"])
-        
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    return gspread.authorize(credentials)
+API_URL = "https://script.google.com/macros/s/AKfycbyxrS7YzliiFl6qOWIl0v0kNM4kDFIBS_c3Mcxpw0IH90R2mBHBpk6QGuaPhAjKfhWu/exec"
 
 def get_user_credits(email, code):
     try:
-        gc = get_gspread_client()
-        sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
-        records = sheet.get_all_records()
+        res = requests.get(API_URL, params={
+            "action": "login",
+            "email": str(email).strip().lower(),
+            "code": str(code).strip()
+        }, timeout=10)
         
-        email_clean = str(email).strip().lower()
-        code_clean = str(code).strip()
-        
-        for row in records:
-            clean_row = {str(k).strip().lower(): v for k, v in row.items()}
-            row_email = str(clean_row.get("email", "")).strip().lower()
-            row_code = str(clean_row.get("license_code", "")).strip()
-            
-            if row_email == email_clean and row_code == code_clean:
-                try:
-                    return int(clean_row.get("credits", 0))
-                except (ValueError, TypeError):
-                    return 0
-                    
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("status") == "success":
+                return int(data.get("credits", 0))
         return None
     except Exception as e:
-        st.error(f"Hiba az adatbázis elérésekor: {e}")
+        st.error(f"Hálózati hiba: {e}")
         return None
 
 def deduct_one_credit(email):
     try:
-        gc = get_gspread_client()
-        sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
-        records = sheet.get_all_records()
+        res = requests.get(API_URL, params={
+            "action": "deduct",
+            "email": str(email).strip().lower()
+        }, timeout=10)
         
-        email_clean = str(email).strip().lower()
-        
-        for idx, row in enumerate(records):
-            clean_row = {str(k).strip().lower(): v for k, v in row.items()}
-            row_email = str(clean_row.get("email", "")).strip().lower()
-            
-            if row_email == email_clean:
-                current_credits = int(clean_row.get("credits", 0))
-                if current_credits > 0:
-                    row_number = idx + 2
-                    sheet.update_cell(row_number, 3, current_credits - 1)
-                    return True
+        if res.status_code == 200:
+            data = res.json()
+            return data.get("status") == "success"
         return False
     except Exception as e:
         st.error(f"Hiba a kredit levonásakor: {e}")
